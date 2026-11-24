@@ -23,7 +23,7 @@
 import os
 import threading
 import time
-from typing import Optional, Dict, Mapping, Sequence, TYPE_CHECKING
+from typing import Optional, Dict, List, Mapping, Sequence, TYPE_CHECKING
 from pathlib import Path
 
 from . import util
@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 
 HEADER_SIZE = 80  # bytes
 CHUNK_SIZE = constants.HEADERS_CHUNK_SIZE  # num headers requested together
-MAX_FUTURE_BLOCK_TIME = 3 * 60 * 60  # consensus allows 2 hours; tolerate some local clock error
+MAX_FUTURE_BLOCK_TIME = 20 * 60  # consensus allows 15 minutes under ASERT; tolerate a small local clock error
+MEDIAN_TIME_SPAN = 11
 
 # see https://github.com/bitcoin/bitcoin/blob/feedb9c84e72e4fff489810a2bbeec09bcda5763/src/chainparams.cpp#L76
 MAX_TARGET = 0x00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff  # compact: 0x1d00ffff
@@ -370,20 +371,29 @@ class Blockchain(Logger):
         self._size = os.path.getsize(p)//HEADER_SIZE if p.exists() else 0
 
     @classmethod
-    def verify_header(cls, header: dict, prev_hash: str, target: int, expected_header_hash: str=None, *, check_pow: bool = True) -> None:
+    def verify_header(cls, header: dict, prev_hash: str, target: int, expected_header_hash: str=None, *, check_pow: bool = True, prev_times: Sequence[int] = ()) -> None:
         _hash = hash_header(header)
         if expected_header_hash and expected_header_hash != _hash:
             raise InvalidHeader("hash mismatches with expected: {} vs {}".format(expected_header_hash, _hash))
         if prev_hash != header.get('prev_block_hash'):
             raise InvalidHeader("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
-        if constants.net.TESTNET:
+        if constants.net.SKIP_POW_CHECK:
             return
         bits = cls.target_to_bits(target)
         if bits != header.get('bits'):
             raise InvalidHeader("bits mismatch: %s vs %s" % (bits, header.get('bits')))
         if header['timestamp'] > time.time() + MAX_FUTURE_BLOCK_TIME:
-            # ASERT makes a block after a far-future one very easy
+            # ASERT makes a block after a far-future one easier
             raise InvalidHeader("timestamp too far in the future. is the local clock correct?")
+        if prev_times and header['timestamp'] <= sorted(prev_times)[len(prev_times) // 2]:
+            raise InvalidHeader("timestamp not after the median of the previous blocks")
+        version = header['version']
+        if auxpow.has_auxpow(version):
+            base_version = version & 0xff
+        else:
+            base_version = version if version < 1 << 31 else version - (1 << 32)
+        if base_version < 4 and header['block_height'] > 0 and header['block_height'] > constants.net.max_checkpoint():
+            raise InvalidHeader("outdated version")
         if not check_pow:  # loaded from disk: was checked before it was stored, without the auxpow
             return
         if auxpow.has_auxpow(header['version']):
@@ -410,7 +420,7 @@ class Blockchain(Logger):
         below_checkpoint = index < len(self.checkpoints)
         if below_checkpoint and len(headers) != CHUNK_SIZE:
             raise InvalidHeader("incomplete chunk below checkpoint")
-        prev_timestamp = None
+        times = [] if below_checkpoint else self._get_prev_times(start_height)
         for i, raw_header in enumerate(headers):
             height = start_height + i
             try:
@@ -426,10 +436,10 @@ class Blockchain(Logger):
                 if prev_hash != header['prev_block_hash']:
                     raise InvalidHeader("prev hash mismatch")
             else:
-                target = self.get_target(height, prev_timestamp=prev_timestamp)
-                self.verify_header(header, prev_hash, target, expected_header_hash)
+                target = self.get_target(height, prev_timestamp=times[-1] if times else None)
+                self.verify_header(header, prev_hash, target, expected_header_hash, prev_times=times)
             prev_hash = hash_header(header)
-            prev_timestamp = header['timestamp']
+            times = (times + [header['timestamp']])[-MEDIAN_TIME_SPAN:]
 
     @with_lock
     def path(self) -> Path:
@@ -626,9 +636,11 @@ class Blockchain(Logger):
     def get_target(self, height: int, *, prev_timestamp: int = None) -> int:
         """Target for the block at height, above the max checkpoint. Uses the header before it."""
         net = constants.net
-        if net.TESTNET:
+        if net.SKIP_POW_CHECK:
             return 0
         if height <= net.ASERT_ANCHOR_HEIGHT:
+            if net.ASERT_ANCHOR_HEIGHT < 116 and net.TESTNET:
+                return MAX_TARGET
             raise Exception("targets before ASERT are fixed by the checkpoints")
         if prev_timestamp is None:
             prev_timestamp = self._get_timestamp(height - 1)
@@ -642,7 +654,16 @@ class Blockchain(Logger):
         )
         return self.bits_to_target(self.target_to_bits(target))
 
+    def _get_prev_times(self, height: int) -> List[int]:
+        """Timestamps of up to 11 blocks before height, oldest first."""
+        if constants.net.SKIP_POW_CHECK:
+            return []
+        return [self._get_timestamp(h) for h in range(max(0, height - MEDIAN_TIME_SPAN), height)]
+
     def _get_timestamp(self, height: int) -> int:
+        back = constants.net.max_checkpoint() - height
+        if 0 <= back < len(constants.net.CHECKPOINT_TIMES):
+            return constants.net.CHECKPOINT_TIMES[-1 - back]
         if height <= constants.net.max_checkpoint() and (height + 1) % CHUNK_SIZE == 0:
             _hash, timestamp = self.checkpoints[height // CHUNK_SIZE]
             return timestamp
@@ -694,7 +715,7 @@ class Blockchain(Logger):
         """Work of the chain above the max checkpoint. All chains share everything up to it."""
         if height is None:
             height = max(0, self.height())
-        if constants.net.TESTNET:
+        if constants.net.SKIP_POW_CHECK:
             # On testnet/regtest, difficulty works somewhat different.
             # It's out of scope to properly implement that.
             return height
@@ -732,10 +753,11 @@ class Blockchain(Logger):
             return False
         try:
             target = self.get_target(height)
+            prev_times = self._get_prev_times(height)
         except MissingHeader:
             return False
         try:
-            self.verify_header(header, prev_hash, target, check_pow=check_pow)
+            self.verify_header(header, prev_hash, target, check_pow=check_pow, prev_times=prev_times)
         except BaseException as e:
             self.logger.info(f'header {height} rejected: {e!r}')
             return False

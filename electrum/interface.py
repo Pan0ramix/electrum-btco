@@ -79,7 +79,8 @@ KNOWN_ELEC_PROTOCOL_TRANSPORTS = {'t', 's'}
 PREFERRED_NETWORK_PROTOCOL = 's'
 assert PREFERRED_NETWORK_PROTOCOL in KNOWN_ELEC_PROTOCOL_TRANSPORTS
 
-MAX_NUM_HEADERS_PER_REQUEST = CHUNK_SIZE  # merge-mined headers are ~1 kB each
+MAX_NUM_HEADERS_PER_REQUEST = CHUNK_SIZE
+MAX_NUM_AUXPOW_HEADERS = 100  # in one response: merge-mined headers are ~1 kB each, but can be much larger
 assert MAX_NUM_HEADERS_PER_REQUEST >= CHUNK_SIZE
 
 
@@ -910,6 +911,15 @@ class Interface(Logger):
             raise Exception(f"{repr(start_height)} is not a block height")
         if not is_non_negative_integer(count) or not (0 < count <= MAX_NUM_HEADERS_PER_REQUEST):
             raise Exception(f"{repr(count)} not an int in range ]0, {MAX_NUM_HEADERS_PER_REQUEST}]")
+        if count > MAX_NUM_AUXPOW_HEADERS and start_height + count - 1 > constants.net.max_checkpoint():
+            headers = []
+            while len(headers) < count:
+                n = min(MAX_NUM_AUXPOW_HEADERS, count - len(headers))
+                part = await self.get_block_headers(start_height=start_height + len(headers), count=n, timeout=timeout, mode=mode)
+                headers += part
+                if len(part) < n:  # reached the tip
+                    break
+            return headers
         self.logger.info(
             f"requesting block headers: [{start_height}, {start_height+count-1}], {count=}"
             + (f" (in {mode=})" if mode is not None else "")
@@ -936,9 +946,9 @@ class Interface(Logger):
             headers = list(bfh(hex_header) for hex_header in hex_headers_list)
         else:  # older protocols concatenate headers, which have variable length here
             raise RequestCorrupted("protocol 1.6 is required")
-        # we never request more than MAX_NUM_HEADERS_IN_REQUEST headers, but we enforce those fit in a single response
-        if res['max'] < MAX_NUM_HEADERS_PER_REQUEST:
-            raise RequestCorrupted(f"server uses too low 'max' count for block.headers: {res['max']} < {MAX_NUM_HEADERS_PER_REQUEST}")
+        # we enforce that what we request fits in a single response
+        if res['max'] < count:
+            raise RequestCorrupted(f"server uses too low 'max' count for block.headers: {res['max']} < {count}")
         if res['count'] > count:
             raise RequestCorrupted(f"asked for {count} headers but got more: {res['count']}")
         elif res['count'] < count:

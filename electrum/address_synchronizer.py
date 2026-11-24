@@ -1115,7 +1115,7 @@ class AddressSynchronizer(Logger, EventListener):
             maturity = COINBASE_MATURITY
         else:
             tx = self.db.get_transaction(utxo.prevout.txid.hex())
-            if tx is not None and tx.is_hogex_tx():
+            if tx is not None and tx.is_hogex_tx() and utxo.prevout.out_idx > 0:
                 maturity = PEGOUT_MATURITY
         return maturity > 0 and utxo.block_height + maturity > spend_height
 

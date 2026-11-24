@@ -717,7 +717,14 @@ def is_segwit_address(addr: str, *, net=None) -> bool:
         witver, witprog = segwit_addr.decode_segwit_address(net.SEGWIT_HRP, addr)
     except Exception as e:
         return False
+    if witprog is not None and is_mweb_program(witver, bytes(witprog)):
+        return False
     return witprog is not None
+
+
+def is_mweb_program(witver: int, witprog: bytes) -> bool:
+    """Consensus reserves these for the MWEB balance (HogAddr) and for peg-ins. Nobody has keys for them."""
+    return witver in (8, 9) and len(witprog) == 32
 
 
 def is_taproot_address(addr: str, *, net=None) -> bool:

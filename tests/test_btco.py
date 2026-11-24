@@ -65,3 +65,30 @@ class TestBitcoinOil(ElectrumTestCase):
         hogex = "02000000" + "0008" + "01" + "33" * 32 + "00000000" + "00" + "ffffffff" + outs + "00" + "00000000"
         self.assertEqual(Transaction(legacy).txid(), Transaction(hogex).txid())
         self.assertTrue(Transaction(hogex).is_hogex_tx())
+        self.assertEqual(hogex, Transaction(Transaction(hogex).serialize()).serialize_to_network())
+        self.assertFalse(Transaction(legacy).is_hogex_tx())
+
+    def test_mweb_programs_are_not_addresses(self):
+        from electrum import segwit_addr
+        from electrum.transaction import get_address_from_output_script
+        for witver in (8, 9):
+            addr = segwit_addr.encode_segwit_address("btco", witver, b"\x11" * 32)
+            self.assertFalse(bitcoin.is_address(addr))
+            with self.assertRaises(bitcoin.BitcoinException):
+                bitcoin.address_to_script(addr)
+            self.assertIsNone(get_address_from_output_script(bytes([0x50 + witver, 0x20]) + b"\x11" * 32))
+
+    def test_fee_without_estimates(self):
+        from electrum.fee_policy import FeeTimeEstimates
+        self.assertEqual(10000, FeeTimeEstimates().eta_to_fee(0))
+
+    def test_old_time_and_version(self):
+        raw = bytearray(HEADERS[0])
+        for field, value in ((slice(68, 72), 1795446717), (slice(0, 4), 0x0b0c0103)):
+            bad = bytearray(raw)
+            bad[field] = value.to_bytes(4, 'little')
+            header = deserialize_header(bytes(bad), 157500)
+            with self.assertRaisesRegex(InvalidHeader, "median|outdated"):
+                self.chain.verify_header(
+                    header, header['prev_block_hash'], self.chain.get_target(157500),
+                    prev_times=self.chain._get_prev_times(157500))

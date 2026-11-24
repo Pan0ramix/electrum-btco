@@ -31,7 +31,7 @@ import logging
 from aiorpcx import run_in_thread, RPCError
 
 from . import util
-from .transaction import Transaction, PartialTransaction
+from .transaction import Transaction, MwebDataNotSupported, PartialTransaction
 from .util import make_aiohttp_session, NetworkJobOnDefaultServer, random_shuffled_copy, OldTaskGroup
 from .bitcoin import address_to_scripthash, is_address, neuter_bitcoin_address
 from .logging import Logger
@@ -269,6 +269,12 @@ class Synchronizer(SynchronizerBase):
         finally:
             self._requests_answered += 1
         tx = Transaction(raw_tx)
+        try:
+            tx.deserialize()
+        except MwebDataNotSupported:
+            # unconfirmed peg-in. We ask again when its status changes, i.e. when it is mined.
+            self.requested_tx.remove(tx_hash)
+            return
         if tx_hash != tx.txid():
             raise SynchronizerFailure(f"received tx does not match expected txid ({tx_hash} != {tx.txid()})")
         self.requested_tx.remove(tx_hash)

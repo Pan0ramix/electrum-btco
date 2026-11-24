@@ -48,8 +48,13 @@ class _Reader:
             raise AuxPowError('non-canonical compact size')
         return n
 
-    def branch(self) -> Sequence[bytes]:
-        return [self.read(32) for _ in range(self.compact_size())]
+    def branch(self, limit: int = None) -> Sequence[bytes]:
+        n = self.compact_size()
+        if limit is not None and n > limit:
+            raise AuxPowError('merkle branch too long')
+        if n * 32 > len(self.data) - self.pos:
+            raise AuxPowError('truncated auxpow')
+        return [self.read(32) for _ in range(n)]
 
     def coinbase(self) -> Tuple[bytes, int, bytes]:
         version = self.read(4)
@@ -94,7 +99,7 @@ def parse_auxpow(data: bytes) -> AuxPow:
     r.read(32)  # parent block hash, not used by consensus
     merkle_branch = r.branch()
     r.read(4)  # index, always taken as 0
-    chain_branch = r.branch()
+    chain_branch = r.branch(limit=30)
     chain_index = r.uint(4)
     parent = r.read(HEADER_SIZE)
     if r.pos != len(data):

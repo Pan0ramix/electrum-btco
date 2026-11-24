@@ -23,7 +23,7 @@ FEERATE_STATIC_VALUES = [1000, 2000, 5000, 10000, 20000, 30000,
 # satoshi per kbyte
 FEERATE_MAX_DYNAMIC = 1500000
 FEERATE_WARNING_HIGH_FEE = 600000
-FEERATE_FALLBACK_STATIC_FEE = 150000
+FEERATE_FALLBACK_STATIC_FEE = 10000  # 10 sat/vB. Nodes often have too few transactions to estimate fees.
 FEERATE_REGTEST_STATIC_FEE = FEERATE_FALLBACK_STATIC_FEE  # hardcoded fee used on regtest
 FEERATE_MIN_RELAY = 100
 FEERATE_DEFAULT_RELAY = 1000  # conservative "min relay fee"
@@ -445,6 +445,6 @@ class FeeTimeEstimates:
             if fee is not None:
                 fee = int(fee)
         # fallback for regtest
-        if fee is None and constants.net is constants.BitcoinRegtest:
-            return FEERATE_REGTEST_STATIC_FEE
+        if fee is None:
+            return FEERATE_FALLBACK_STATIC_FEE
         return fee

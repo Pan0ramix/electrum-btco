@@ -72,7 +72,7 @@ Pane {
                 Layout.alignment: Qt.AlignRight
             }
             Label {
-                text: '<a href="https://electrum.org">https://electrum.org</a>'
+                text: '<a href="https://github.com/Pan0ramix/electrum-btco">github.com/Pan0ramix/electrum-btco</a>'
                 textFormat: Text.RichText
                 onLinkActivated: Qt.openUrlExternally(link)
             }

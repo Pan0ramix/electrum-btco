@@ -130,6 +130,13 @@ async def _append_utxos_to_inputs(
         txin = PartialTxInput(prevout=prevout)
         txin.utxo = prev_tx
         txin.block_height = int(item['height'])
+        maturity = 0
+        if prev_tx.is_coinbase_tx():
+            maturity = bitcoin.COINBASE_MATURITY
+        elif prev_tx.is_hogex_tx() and txin.prevout.out_idx > 0:
+            maturity = bitcoin.PEGOUT_MATURITY
+        if txin.block_height + maturity > network.get_local_height() + 1:
+            return  # the node would refuse to spend it yet
         txin.script_descriptor = script_descriptor
         inputs.append(txin)
 

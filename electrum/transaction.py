@@ -871,6 +871,8 @@ def get_address_from_output_script(_bytes: bytes, *, net=None) -> Optional[str]:
     for witver, opcode in enumerate(future_witness_versions, start=1):
         match = [opcode, OPPushDataGeneric(lambda x: 2 <= x <= 40)]
         if match_script_against_template(decoded, match):
+            if bitcoin.is_mweb_program(witver, decoded[1][1]):
+                return None
             return hash_to_segwit_addr(decoded[1][1], witver=witver, net=net)
 
     return None
@@ -909,8 +911,13 @@ def multisig_script(public_keys: Sequence[str], m: int) -> bytes:
     return construct_script([m, *public_keys, n, opcodes.OP_CHECKMULTISIG])
 
 
+class MwebDataNotSupported(SerializationError):
+    """Unconfirmed transaction with MWEB data. Once mined, its transparent part is served alone."""
+
+
 class Transaction:
     _cached_network_ser: Optional[str]
+    _is_hogex: bool = False
 
     def __str__(self):
         return self.serialize()
@@ -1003,7 +1010,8 @@ class Transaction:
             for txin in txins:
                 parse_witness(vds, txin)
         if is_hogex and vds.read_bytes(1) != b'\x00':
-            raise SerializationError('MWEB transaction data is not supported')
+            raise MwebDataNotSupported('MWEB transaction data is not supported')
+        self._is_hogex = is_hogex
         self._inputs = txins  # only expose field after witness is parsed, for sanity
         self._locktime = vds.read_uint32()
         if vds.can_read_more():
@@ -1235,7 +1243,7 @@ class Transaction:
     def serialize_as_bytes(self) -> bytes:
         return bfh(self.serialize())
 
-    def serialize_to_network(self, *, estimate_size=False, include_sigs=True, force_legacy=False) -> str:
+    def serialize_to_network(self, *, estimate_size=False, include_sigs=True, force_legacy=False, include_mweb=True) -> str:
         """Serialize the transaction as used on the Bitcoin network, into hex.
         `include_sigs` signals whether to include scriptSigs and witnesses.
         `force_legacy` signals to use the pre-segwit format
@@ -1260,6 +1268,12 @@ class Transaction:
         use_segwit_ser_for_estimate_size = estimate_size and self.is_any_segwit(guess_for_address=True)
         use_segwit_ser_for_actual_use = not estimate_size and self.is_any_segwit()
         use_segwit_ser = use_segwit_ser_for_estimate_size or use_segwit_ser_for_actual_use
+        if self._is_hogex and include_mweb and include_sigs and not force_legacy:
+            flag = '09' if use_segwit_ser else '08'
+            witness = ''
+            if use_segwit_ser:
+                witness = ''.join(self.serialize_witness(x, estimate_size=estimate_size).hex() for x in inputs)
+            return nVersion + '00' + flag + txins + txouts + witness + '00' + nLocktime
         if include_sigs and not force_legacy and use_segwit_ser:
             marker = '00'
             flag = '01'
@@ -1301,7 +1315,7 @@ class Transaction:
         if not self.is_complete():
             return None
         try:
-            ser = self.serialize_to_network()
+            ser = self.serialize_to_network(include_mweb=False)
         except UnknownTxinType:
             # we might not know how to construct scriptSig/witness for some scripts
             return None
@@ -1403,9 +1417,9 @@ class Transaction:
         return bool(self.inputs()) and self.inputs()[0].is_coinbase_input()
 
     def is_hogex_tx(self) -> bool:
-        """MWEB integration transaction: its first output holds the MWEB balance."""
-        script = self.outputs()[0].scriptpubkey
-        return len(script) == 34 and script[:2] == b'\x58\x20'
+        """MWEB integration transaction: output 0 holds the MWEB balance, the others are peg-outs."""
+        self.deserialize()
+        return self._is_hogex
 
     def estimated_size(self) -> int:
         """Return an estimated virtual tx size in vbytes.
