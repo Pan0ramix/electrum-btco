@@ -4224,6 +4224,8 @@ class Deterministic_Wallet(Abstract_Wallet):
     def _init_lnworker(self):
         # lightning_privkey2 is not deterministic (legacy wallets, bip39)
         ln_xprv = self.db.get('lightning_xprv') or self.db.get('lightning_privkey2')
+        if not constants.net.LIGHTNING_SUPPORTED:
+            ln_xprv = None
         # lnworker can only be initialized once receiving addresses are available
         # therefore we instantiate lnworker in DeterministicWallet
         self.lnworker = LNWallet(self, ln_xprv) if ln_xprv else None

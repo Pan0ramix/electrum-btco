@@ -25,6 +25,7 @@
 import functools
 import json
 import os
+import re
 import string
 from typing import Optional
 
@@ -82,6 +83,19 @@ def _ensure_translation_keeps_format_string_syntax_similar(translator):
     return safe_translator
 
 
+# The source strings and their translations name Bitcoin. Keep them, and rename on display.
+_RENAME = re.compile(r'(?<!\{)\b(m?BTC|Bitcoin|bitcoin|BITCOIN)\b(?!\})')
+_NAMES = {'BTC': 'BTCO', 'mBTC': 'mBTCO', 'Bitcoin': 'BitcoinOil', 'bitcoin': 'BitcoinOil', 'BITCOIN': 'BITCOINOIL'}
+
+
+def _rename_coin(translator):
+    @functools.wraps(translator)
+    def wrapper(msg: str, **kwargs):
+        return _RENAME.sub(lambda m: _NAMES[m.group(1)], translator(msg, **kwargs))
+    return wrapper
+
+
+
 # note: do not use old-style (%) formatting inside translations,
 #       as syntactically incorrectly translated strings often raise exceptions (see #3237).
 #       e.g. consider  _("Connected to %d nodes.") % n            # <- raises. do NOT use
@@ -95,6 +109,7 @@ def _ensure_translation_keeps_format_string_syntax_similar(translator):
 #       However, only if the translators understand and use it correctly!
 #          _("time left: {0} minutes, {1} seconds").format(t//60, t%60)                   # <- works. ok to use
 #          _("time left: {mins} minutes, {secs} seconds").format(mins=t//60, secs=t%60)   # <- works, but too complex
+@_rename_coin
 @_ensure_translation_keeps_format_string_syntax_similar
 def _(msg: str, *, context=None) -> str:
     if msg == "":

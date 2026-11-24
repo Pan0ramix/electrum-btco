@@ -736,6 +736,8 @@ class BIP32_KeyStore(Xpub, Deterministic_KeyStore):
         return pk, True
 
     def can_have_deterministic_lightning_xprv(self):
+        if not constants.net.LIGHTNING_SUPPORTED:
+            return False
         if (self.get_seed_type() == 'segwit'
                 and self.get_bip32_node_for_xpub().xtype == 'p2wpkh'):
             return True
