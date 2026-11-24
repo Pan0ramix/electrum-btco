@@ -75,6 +75,13 @@ class IncorrectPluginHash(Exception):
     pass
 
 
+# These depend on Bitcoin services or on hardware firmware that does not know BitcoinOil.
+DISABLED_PLUGINS = frozenset([
+    'bitbox02', 'coldcard', 'digitalbitbox', 'jade', 'keepkey', 'ledger', 'safe_t', 'trezor',
+    'labels', 'nwc', 'psbt_nostr', 'revealer', 'swapserver', 'timelock_recovery', 'trustedcoin', 'watchtower',
+])
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class PluginMetadata:
     name: str  # e.g. 'amodem'
@@ -185,6 +192,8 @@ class Plugins(DaemonThread):
             #       once as data and once as code. To honor the "no duplicates" rule below,
             #       we exclude the ones packaged as *code*, here:
             if loader.__class__.__qualname__ == "PyiFrozenImporter":
+                continue
+            if not external and name in DISABLED_PLUGINS:
                 continue
             module_path = os.path.join(pkg_path, name)
             if self.cmd_only and not self.config.get(f'plugins.{name}.enabled') is True:

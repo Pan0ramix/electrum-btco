@@ -984,12 +984,15 @@ class Transaction:
         self._version = vds.read_int32()
         n_vin = vds.read_compact_size()
         is_segwit = (n_vin == 0)
+        is_hogex = False
         if is_segwit:
-            marker = vds.read_bytes(1)
-            if marker != b'\x01':
-                raise SerializationError('invalid txn marker byte: {}'.format(marker))
+            flags = vds.read_bytes(1)[0]
+            if flags not in (0x01, 0x08, 0x09):
+                raise SerializationError('invalid txn flags byte: {}'.format(flags))
+            is_segwit = bool(flags & 0x01)
+            is_hogex = bool(flags & 0x08)  # MWEB integration transaction, the last one in its block
             n_vin = vds.read_compact_size()
-        if n_vin < 1:
+        if n_vin < 1 and not is_hogex:  # the first HogEx has no inputs
             raise SerializationError('tx needs to have at least 1 input')
         txins = [parse_input(vds) for i in range(n_vin)]
         n_vout = vds.read_compact_size()
@@ -999,6 +1002,8 @@ class Transaction:
         if is_segwit:
             for txin in txins:
                 parse_witness(vds, txin)
+        if is_hogex and vds.read_bytes(1) != b'\x00':
+            raise SerializationError('MWEB transaction data is not supported')
         self._inputs = txins  # only expose field after witness is parsed, for sanity
         self._locktime = vds.read_uint32()
         if vds.can_read_more():
@@ -1395,7 +1400,12 @@ class Transaction:
         return any([txin.nsequence < 0xffffffff - 1 for txin in self.inputs()])
 
     def is_coinbase_tx(self) -> bool:
-        return self.inputs()[0].is_coinbase_input()
+        return bool(self.inputs()) and self.inputs()[0].is_coinbase_input()
+
+    def is_hogex_tx(self) -> bool:
+        """MWEB integration transaction: its first output holds the MWEB balance."""
+        script = self.outputs()[0].scriptpubkey
+        return len(script) == 34 and script[:2] == b'\x58\x20'
 
     def estimated_size(self) -> int:
         """Return an estimated virtual tx size in vbytes.

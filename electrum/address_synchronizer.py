@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, NamedTuple, Sequen
 
 from .crypto import sha256
 from . import bitcoin, util
-from .bitcoin import COINBASE_MATURITY
+from .bitcoin import COINBASE_MATURITY, PEGOUT_MATURITY
 from .util import (
     profiler, bfh, TxMinedInfo, UnrelatedTransactionException, InvalidTxSignature, with_lock, OldTaskGroup,
 )
@@ -310,7 +310,7 @@ class AddressSynchronizer(Logger, EventListener):
             # BUT we track is_mine inputs in a txn, and during subsequent calls
             # of add_transaction tx, we might learn of more-and-more inputs of
             # being is_mine, as we roll the gap_limit forward
-            is_coinbase = tx.inputs()[0].is_coinbase_input()
+            is_coinbase = tx.is_coinbase_tx()
             tx_height = self.get_tx_height(tx_hash, force_local_if_missing_tx=False).height()
             if not allow_unrelated:
                 # note that during sync, if the transactions are not properly sorted,
@@ -1028,8 +1028,7 @@ class AddressSynchronizer(Logger, EventListener):
                 continue
             v = utxo.value_sats()
             tx_height = utxo.block_height
-            is_cb = utxo.is_coinbase_output()
-            if is_cb and tx_height + COINBASE_MATURITY > mempool_height:
+            if self._is_immature(utxo, mempool_height):
                 x += v
             elif tx_height > 0:
                 c += v
@@ -1103,13 +1102,22 @@ class AddressSynchronizer(Logger, EventListener):
                     continue
                 if nonlocal_only and txo.block_height in (TX_HEIGHT_LOCAL, TX_HEIGHT_FUTURE):
                     continue
-                if (mature_only and txo.is_coinbase_output()
-                        and txo.block_height + COINBASE_MATURITY > mempool_height):
+                if mature_only and self._is_immature(txo, mempool_height):
                     continue
                 coins.append(txo)
                 continue
         self._get_utxos_cache[cache_key] = copy.deepcopy(coins)
         return coins
+
+    def _is_immature(self, utxo: 'PartialTxInput', spend_height: int) -> bool:
+        maturity = 0
+        if utxo.is_coinbase_output():
+            maturity = COINBASE_MATURITY
+        else:
+            tx = self.db.get_transaction(utxo.prevout.txid.hex())
+            if tx is not None and tx.is_hogex_tx():
+                maturity = PEGOUT_MATURITY
+        return maturity > 0 and utxo.block_height + maturity > spend_height
 
     def is_used(self, address: str) -> bool:
         """Whether any tx ever touched `address`."""

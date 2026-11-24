@@ -678,7 +678,7 @@ class FxThread(ThreadJob, EventListener, NetworkRetryManager[str]):
                 await self.exchange.update_spot_rates_safe(self.ccy)
 
     def is_enabled(self) -> bool:
-        return self.config.FX_USE_EXCHANGE_RATE
+        return False  # the exchanges below quote BTC, not BTCO
 
     def set_enabled(self, b: bool) -> None:
         self.config.FX_USE_EXCHANGE_RATE = b

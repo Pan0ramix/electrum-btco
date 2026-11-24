@@ -79,7 +79,7 @@ KNOWN_ELEC_PROTOCOL_TRANSPORTS = {'t', 's'}
 PREFERRED_NETWORK_PROTOCOL = 's'
 assert PREFERRED_NETWORK_PROTOCOL in KNOWN_ELEC_PROTOCOL_TRANSPORTS
 
-MAX_NUM_HEADERS_PER_REQUEST = 2016
+MAX_NUM_HEADERS_PER_REQUEST = CHUNK_SIZE  # merge-mined headers are ~1 kB each
 assert MAX_NUM_HEADERS_PER_REQUEST >= CHUNK_SIZE
 
 
@@ -914,7 +914,11 @@ class Interface(Logger):
             f"requesting block headers: [{start_height}, {start_height+count-1}], {count=}"
             + (f" (in {mode=})" if mode is not None else "")
         )
-        res = await self.session.send_request('blockchain.block.headers', [start_height, count], timeout=timeout)
+        params = [start_height, count]
+        cp = constants.net.max_checkpoint()
+        if 0 < start_height + count - 1 <= cp:
+            params.append(cp)  # the server then leaves out the auxpow, which the checkpoints make redundant
+        res = await self.session.send_request('blockchain.block.headers', params, timeout=timeout)
         # check response
         assert_dict_contains_field(res, field_name='count')
         assert_dict_contains_field(res, field_name='max')
@@ -925,17 +929,13 @@ class Interface(Logger):
             assert_list_or_tuple(hex_headers_list)
             for item in hex_headers_list:
                 assert_hex_str(item)
-                if len(item) != HEADER_SIZE * 2:
-                    raise RequestCorrupted(f"invalid header size. got {len(item)//2}, expected {HEADER_SIZE}")
+                if len(item) < HEADER_SIZE * 2:
+                    raise RequestCorrupted(f"invalid header size. got {len(item)//2}, expected at least {HEADER_SIZE}")
             if len(hex_headers_list) != res['count']:
                 raise RequestCorrupted(f"{len(hex_headers_list)=} != {res['count']=}")
             headers = list(bfh(hex_header) for hex_header in hex_headers_list)
-        else: # proto 1.4
-            hex_headers_concat = assert_dict_contains_field(res, field_name='hex')
-            assert_hex_str(hex_headers_concat)
-            if len(hex_headers_concat) != HEADER_SIZE * 2 * res['count']:
-                raise RequestCorrupted('inconsistent chunk hex and count')
-            headers = list(util.chunks(bfh(hex_headers_concat), size=HEADER_SIZE))
+        else:  # older protocols concatenate headers, which have variable length here
+            raise RequestCorrupted("protocol 1.6 is required")
         # we never request more than MAX_NUM_HEADERS_IN_REQUEST headers, but we enforce those fit in a single response
         if res['max'] < MAX_NUM_HEADERS_PER_REQUEST:
             raise RequestCorrupted(f"server uses too low 'max' count for block.headers: {res['max']} < {MAX_NUM_HEADERS_PER_REQUEST}")
@@ -967,7 +967,7 @@ class Interface(Logger):
             headers = await self.get_block_headers(start_height=index * CHUNK_SIZE, count=CHUNK_SIZE)
         finally:
             self._requested_chunks.discard(index)
-        conn = self.blockchain.connect_chunk(index, data=b"".join(headers))
+        conn = self.blockchain.connect_chunk(index, headers)
         if not conn:
             raise RequestCorrupted(f"chunk ({index=}, for {height=}) does not connect to blockchain")
         return None
@@ -1009,7 +1009,7 @@ class Interface(Logger):
         num_headers = 0
         for index, task in tasks:
             headers = task.result()
-            conn = self.blockchain.connect_chunk(index, data=b"".join(headers))
+            conn = self.blockchain.connect_chunk(index, headers)
             if not conn:
                 break
             num_headers += len(headers)

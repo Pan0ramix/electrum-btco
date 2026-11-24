@@ -1,6 +1,6 @@
 ELECTRUM_VERSION = '4.8.4'       # version of the client package
 
-PROTOCOL_VERSION_MIN = '1.4'     # electrum protocol
+PROTOCOL_VERSION_MIN = '1.6'     # electrum protocol
 PROTOCOL_VERSION_MAX = '1.6'
 
 # The hash of the mnemonic seed must begin with this

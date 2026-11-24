@@ -570,6 +570,8 @@ class Abstract_Wallet(ABC, Logger, EventListener):
 
     def can_have_lightning(self) -> bool:
         """ whether this wallet can create new channels """
+        if not constants.net.LIGHTNING_SUPPORTED:
+            return False
         # we want static_remotekey to be a wallet address
         if not self.txin_type == 'p2wpkh':
             return False

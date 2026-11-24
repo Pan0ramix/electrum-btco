@@ -56,10 +56,14 @@ def create_fallback_node_list(fallback_nodes_dict: dict[str, dict]) -> List[LNPe
     return fallback_nodes
 
 
-GIT_REPO_URL = "https://github.com/spesmilo/electrum"
-GIT_REPO_ISSUES_URL = "https://github.com/spesmilo/electrum/issues"
-RELEASE_NOTES_URL = "https://raw.githubusercontent.com/spesmilo/electrum/refs/heads/master/RELEASE-NOTES"
+GIT_REPO_URL = "https://github.com/Pan0ramix/electrum-btco"
+GIT_REPO_ISSUES_URL = "https://github.com/Pan0ramix/electrum-btco/issues"
+RELEASE_NOTES_URL = "https://raw.githubusercontent.com/Pan0ramix/electrum-btco/refs/heads/btco/RELEASE-NOTES"
 BIP39_WALLET_FORMATS = read_json('bip39_wallet_formats.json')
+
+
+# num headers per checkpoint. 157500 (ASERT activation) is a multiple.
+HEADERS_CHUNK_SIZE = 500
 
 
 class AbstractNet:
@@ -75,6 +79,7 @@ class AbstractNet:
     BLOCK_HEIGHT_FIRST_LIGHTNING_CHANNELS: int = 0
     BIP44_COIN_TYPE: int
     LN_REALM_BYTE: int
+    LIGHTNING_SUPPORTED: bool = False  # BitcoinOil has no Lightning network
     DEFAULT_PORTS: Mapping[str, str]
     LN_DNS_SEEDS: Sequence[str]
     XPRV_HEADERS: Mapping[str, int]
@@ -84,7 +89,7 @@ class AbstractNet:
 
     @classmethod
     def max_checkpoint(cls) -> int:
-        return max(0, len(cls.CHECKPOINTS) * 2016 - 1)
+        return max(0, len(cls.CHECKPOINTS) * HEADERS_CHUNK_SIZE - 1)
 
     @classmethod
     def rev_genesis_bytes(cls) -> bytes:
@@ -147,12 +152,12 @@ class BitcoinMainnet(AbstractNet):
 
     NET_NAME = "mainnet"
     TESTNET = False
-    WIF_PREFIX = 0x80
-    ADDRTYPE_P2PKH = 0
-    ADDRTYPE_P2SH = 5
-    SEGWIT_HRP = "bc"
+    WIF_PREFIX = 153
+    ADDRTYPE_P2PKH = 26
+    ADDRTYPE_P2SH = 25
+    SEGWIT_HRP = "btco"
     BOLT11_HRP = SEGWIT_HRP
-    GENESIS = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+    GENESIS = "00000000baccc78f2852f3943bb19ff89df6d374252e72f6b487e68c0d839d54"
     DEFAULT_PORTS = {'t': '50001', 's': '50002'}
     BLOCK_HEIGHT_FIRST_LIGHTNING_CHANNELS = 497000
 
@@ -174,11 +179,15 @@ class BitcoinMainnet(AbstractNet):
     XPUB_HEADERS_INV = inv_dict(XPUB_HEADERS)
     BIP44_COIN_TYPE = 0
     LN_REALM_BYTE = 0
-    LN_DNS_SEEDS = [
-        'nodes.lightning.directory.',
-        'lseed.bitcoinstats.com.',
-        'lseed.darosior.ninja',
-    ]
+    LN_DNS_SEEDS = []
+
+    AUXPOW_CHAIN_ID = 0x0B0C
+    AUXPOW_START_HEIGHT = 155000
+    BLOCK_SPACING = 6 * 60
+    ASERT_ANCHOR_HEIGHT = 157499  # last block before ASERT
+    ASERT_ANCHOR_BITS = 0x1904e74a
+    ASERT_ANCHOR_PARENT_TIME = 1795447755  # timestamp of block 157498
+    ASERT_HALF_LIFE = 2 * 60 * 60
 
     @classmethod
     def datadir_subdir(cls):
@@ -189,12 +198,12 @@ class BitcoinTestnet(AbstractNet):
 
     NET_NAME = "testnet"
     TESTNET = True
-    WIF_PREFIX = 0xef
-    ADDRTYPE_P2PKH = 111
-    ADDRTYPE_P2SH = 196
-    SEGWIT_HRP = "tb"
+    WIF_PREFIX = 178
+    ADDRTYPE_P2PKH = 51
+    ADDRTYPE_P2SH = 50
+    SEGWIT_HRP = "tbtco"
     BOLT11_HRP = SEGWIT_HRP
-    GENESIS = "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
+    GENESIS = "00000000f130184486dad044d14fff1d39665f09551dfafccd5a8f938c05df57"
     DEFAULT_PORTS = {'t': '51001', 's': '51002'}
 
     XPRV_HEADERS = {
@@ -221,47 +230,12 @@ class BitcoinTestnet(AbstractNet):
     ]
 
 
-class BitcoinTestnet4(BitcoinTestnet):
-
-    NET_NAME = "testnet4"
-    GENESIS = "00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043"
-    LN_DNS_SEEDS = []
-
-
 class BitcoinRegtest(BitcoinTestnet):
 
     NET_NAME = "regtest"
-    SEGWIT_HRP = "bcrt"
+    SEGWIT_HRP = "rbtco"
     BOLT11_HRP = SEGWIT_HRP
-    GENESIS = "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"
-    LN_DNS_SEEDS = []
-
-
-class BitcoinSimnet(BitcoinTestnet):
-
-    NET_NAME = "simnet"
-    WIF_PREFIX = 0x64
-    ADDRTYPE_P2PKH = 0x3f
-    ADDRTYPE_P2SH = 0x7b
-    SEGWIT_HRP = "sb"
-    BOLT11_HRP = SEGWIT_HRP
-    GENESIS = "683e86bd5c6d110d91b94b97137ba6bfe02dbbdb8e3dff722a669b5d69d77af6"
-    LN_DNS_SEEDS = []
-
-
-class BitcoinSignet(BitcoinTestnet):
-
-    NET_NAME = "signet"
-    BOLT11_HRP = "tbs"
-    GENESIS = "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
-    LN_DNS_SEEDS = []
-
-
-class BitcoinMutinynet(BitcoinTestnet):
-
-    NET_NAME = "mutinynet"
-    BOLT11_HRP = "tbs"
-    GENESIS = "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
+    GENESIS = "1d58cac6acc090fa7089c03657b2368f6eb16dfc588f577de01394ae9ce75ab3"
     LN_DNS_SEEDS = []
 
 
